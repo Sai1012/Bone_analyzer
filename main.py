@@ -155,15 +155,23 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
 
     summarise_scores(results, df)
 
-    # Save results CSV
+    # Save results CSV and Excel
     results_df = results_to_dataframe(results)
-    # Merge original diagnosis for reference
+    # Merge original diagnosis and raw clinical scores for reference
     if "diagnosis" in df.columns:
         results_df["actual_diagnosis"] = df["diagnosis"].values
+    if "t_score" in df.columns:
+        results_df["t_score"] = df["t_score"].values
+    if "z_score" in df.columns:
+        results_df["z_score"] = df["z_score"].values
 
     csv_path = os.path.join(args.output_dir, "health_scores.csv")
     results_df.to_csv(csv_path, index=False)
     print(f"      Results saved to {csv_path}")
+
+    xlsx_path = os.path.join(args.output_dir, "health_scores.xlsx")
+    results_df.to_excel(xlsx_path, index=False)
+    print(f"      Results saved to {xlsx_path}")
 
     # ── Step 5: Visualisations ───────────────────────────────────────────────
     print("\n[5/5] Generating visualisations...")
