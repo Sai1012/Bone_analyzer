@@ -126,8 +126,10 @@ BASELINE_FALLBACK = True
 # ──────────────────────────────────────────────────────────────────────────────
 
 # --- Advanced Feature Engineering (feature_engineering.py) ---
-# Whether to attempt CNN feature extraction using ResNet50 (requires PyTorch)
-FEATURE_ENGINEERING_USE_CNN = False  # Set True if PyTorch is installed
+# Whether to attempt CNN feature extraction using ResNet50 (requires PyTorch).
+# CNN availability is also detected automatically at import time; set to False
+# to skip CNN extraction even when PyTorch is installed.
+FEATURE_ENGINEERING_USE_CNN = False  # Set True to enable (requires PyTorch)
 
 # Image target size for advanced feature extraction (H, W)
 FEATURE_ENGINEERING_TARGET_SIZE = (256, 256)

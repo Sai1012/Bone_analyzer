@@ -469,7 +469,7 @@ class BoneHealthEnsemble:
 
         if save_path is None:
             save_path = "ensemble_confusion_matrix.png"
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        Path(os.path.abspath(save_path)).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("Confusion matrix saved to %s", save_path)
@@ -507,7 +507,7 @@ class BoneHealthEnsemble:
 
         if save_path is None:
             save_path = "feature_importance.png"
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        Path(os.path.abspath(save_path)).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("Feature importance plot saved to %s", save_path)
@@ -517,7 +517,7 @@ class BoneHealthEnsemble:
 
     def save(self, path: str) -> None:
         """Pickle the fitted ensemble to *path*."""
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        Path(os.path.abspath(path)).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as fh:
             pickle.dump(self, fh)
         logger.info("BoneHealthEnsemble saved to %s", path)

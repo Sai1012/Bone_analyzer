@@ -352,7 +352,7 @@ class ThresholdOptimizer:
             ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        Path(os.path.abspath(save_path)).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("ROC curves saved to %s", save_path)
@@ -367,7 +367,7 @@ class ThresholdOptimizer:
             "optimal_thresholds": self.optimal_thresholds_,
             "auc_scores": self.auc_scores_,
         }
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        Path(os.path.abspath(path)).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
         logger.info("ThresholdOptimizer saved to %s", path)

@@ -518,7 +518,7 @@ class ClassImbalanceHandler:
         ax.set_title("Class Distribution Before vs. After Resampling")
         ax.grid(axis="y", alpha=0.3)
 
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        Path(os.path.abspath(save_path)).parent.mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)

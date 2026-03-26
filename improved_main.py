@@ -539,7 +539,7 @@ def _plot_before_after_bar(
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    Path(os.path.abspath(save_path)).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info("Before/after comparison chart saved to %s", save_path)
