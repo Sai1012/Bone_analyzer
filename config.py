@@ -122,6 +122,46 @@ MIN_STRATUM_SAMPLES = 3
 BASELINE_FALLBACK = True
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Accuracy improvement settings  (used by improved_main.py and sub-modules)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# --- Advanced Feature Engineering (feature_engineering.py) ---
+# Whether to attempt CNN feature extraction using ResNet50 (requires PyTorch).
+# CNN availability is also detected automatically at import time; set to False
+# to skip CNN extraction even when PyTorch is installed.
+FEATURE_ENGINEERING_USE_CNN = False  # Set True to enable (requires PyTorch)
+
+# Image target size for advanced feature extraction (H, W)
+FEATURE_ENGINEERING_TARGET_SIZE = (256, 256)
+
+# --- Class Imbalance (class_imbalance_handler.py) ---
+# Random state for reproducibility across SMOTE / splits
+IMBALANCE_RANDOM_STATE = 42
+
+# k-nearest neighbours for SMOTE (reduced if minority class is very small)
+SMOTE_K_NEIGHBORS = 5
+
+# Fraction of samples to hold out for testing
+TEST_SIZE = 0.2
+
+# --- Ensemble Classifier (ensemble_classifier.py) ---
+# Number of trees in the Random Forest
+RF_N_ESTIMATORS = 100
+
+# Number of boosting rounds (XGBoost) or trees (Extra Trees fallback)
+BOOST_N_ESTIMATORS = 50
+
+# Hidden layer sizes for the MLP neural network
+NN_HIDDEN_LAYERS = (256, 128, 64)
+
+# Ensemble voting method: "soft" | "hard" | "stack"
+ENSEMBLE_METHOD = "soft"
+
+# --- Threshold Optimisation (threshold_optimizer.py) ---
+# Class names in the canonical order used throughout improved modules
+CLASS_NAMES = ["normal", "osteopenia", "osteoporosis"]
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Column name mappings  (Excel header → internal key)
 # Trailing whitespace and special characters in the Excel headers are handled
 # by data_loader.py; the mapping below uses stripped header names.
