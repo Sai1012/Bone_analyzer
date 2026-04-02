@@ -46,7 +46,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -55,7 +55,8 @@ import numpy as np
 # Benchmark data (from provided references/summary)
 # ---------------------------------------------------------------------------
 
-dataclass
+
+@dataclass
 class StudyMetric:
     label: str
     year: int
@@ -115,6 +116,7 @@ REFERENCE_STUDIES: List[StudyMetric] = [
 # ---------------------------------------------------------------------------
 
 DEFAULT_OURS_METRIC = "AUC"
+
 
 def load_ours_metrics(path: str = "output/our_metrics.json") -> Optional[StudyMetric]:
     """Load optional metrics for the proposed model from a JSON file."""
@@ -192,8 +194,10 @@ METRIC_COLORS = {
     "r (corr)": "#54A24B",
 }
 
+
 def _metric_color(metric: str) -> str:
     return METRIC_COLORS.get(metric, "#B279A2")
+
 
 def generate_metric_range_plot(
     studies: List[StudyMetric],
@@ -228,6 +232,7 @@ def generate_metric_range_plot(
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Figure saved to '{output_path}'.")
+
 
 def generate_metric_midpoint_plot(
     studies: List[StudyMetric],
