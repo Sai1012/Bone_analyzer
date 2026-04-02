@@ -57,7 +57,7 @@ from health_scale_calculator import (
     results_to_dataframe,
     summarise_scores,
 )
-from visualizer import generate_all_charts
+from visualizer import generate_all_charts, plot_patient_report
 
 from feature_engineering import (
     AdvancedFeatureExtractor,
@@ -171,6 +171,16 @@ def run_improved_pipeline(args: argparse.Namespace) -> Dict:
     results_df = results_to_dataframe(results)
     if "diagnosis" in df.columns:
         results_df["actual_diagnosis"] = df["diagnosis"].values
+
+    # Generate one clinical dashboard PNG per patient
+    saved_reports = 0
+    for result in results:
+        try:
+            plot_patient_report(result, save_dir=args.output_dir)
+            saved_reports += 1
+        except Exception as exc:
+            logger.warning("Failed to generate patient report: %s", exc)
+    print(f"      Saved {saved_reports} patient report(s) to {args.output_dir}")
 
     health_scores = np.array([r.health_score for r in results])
     y_true = _encode_labels(df["diagnosis"].values)
