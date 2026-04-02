@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Optional
+import textwrap
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend
@@ -21,6 +22,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Circle, FancyBboxPatch
 
 from config import OUTPUT_DIR
 from feature_extractor import ALL_FEATURE_NAMES
@@ -46,119 +49,256 @@ def _score_color(score: int) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Individual patient report
+# Individual patient report – clinical dashboard layout
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Soft medical colour palette used by the clinical dashboard
+_REPORT_COLORS = {
+    "bg":     "#F7F9FB",
+    "card":   "#FFFFFF",
+    "border": "#E0E0E0",
+    "green":  "#4CAF50",
+    "red":    "#E57373",
+    "yellow": "#FBC02D",
+    "text":   "#333333",
+}
+
+
+def add_card(ax: plt.Axes) -> None:
+    """Paint *ax* with a white card background and a rounded border."""
+    ax.set_facecolor(_REPORT_COLORS["card"])
+    card = FancyBboxPatch(
+        (0, 0), 1, 1,
+        boxstyle="round,pad=0.02",
+        transform=ax.transAxes,
+        fc=_REPORT_COLORS["card"],
+        ec=_REPORT_COLORS["border"],
+        lw=1,
+        zorder=0,
+    )
+    ax.add_patch(card)
+
+
+def _report_score_color(score: float) -> str:
+    """Return a colour from the medical palette for *score* (1–10)."""
+    if score >= 8:
+        return _REPORT_COLORS["green"]
+    if score >= 5:
+        return _REPORT_COLORS["yellow"]
+    return _REPORT_COLORS["red"]
+
+
+def draw_gauge(ax: plt.Axes, score: float) -> None:
+    """Draw a semicircular gauge for *score* (1–10) on *ax* (no card)."""
+    ax.axis("equal")
+    ax.axis("off")
+    ax.set_facecolor("none")
+    # Expanded limits prevent arc clipping
+    ax.set_xlim(-1.2, 1.2)
+    ax.set_ylim(-0.3, 1.2)
+
+    # Background arc
+    angles = np.linspace(180, 0, 200)
+    ax.plot(
+        np.cos(np.deg2rad(angles)),
+        np.sin(np.deg2rad(angles)),
+        lw=18, color="#E1E4E8", solid_capstyle="round", clip_on=False,
+    )
+
+    # Coloured value arc
+    value_angle = 180 - (score / 10) * 180
+    arc = np.linspace(180, value_angle, 200)
+    ax.plot(
+        np.cos(np.deg2rad(arc)),
+        np.sin(np.deg2rad(arc)),
+        lw=18, color=_report_score_color(score), solid_capstyle="round", clip_on=False,
+    )
+
+    # Needle
+    needle_rad = np.deg2rad(value_angle)
+    ax.plot(
+        [0, np.cos(needle_rad) * 0.85],
+        [0, np.sin(needle_rad) * 0.85],
+        lw=3.5, color=_REPORT_COLORS["text"], clip_on=False,
+    )
+    ax.add_patch(Circle((0, 0), 0.03, color=_REPORT_COLORS["text"], clip_on=False))
+
+    ax.text(0, -0.12, f"{score:.1f}/10",
+            ha="center", va="center", fontsize=16, fontweight="bold")
+    ax.text(0, 0.25, "Risk Level",
+            ha="center", fontsize=10, color=_REPORT_COLORS["text"])
+
+
+def draw_feature_chart(ax: plt.Axes, features: Dict[str, Optional[float]]) -> None:
+    """Horizontal bar chart of feature z-scores inside a card."""
+    add_card(ax)
+
+    valid = {k: v for k, v in features.items() if v is not None}
+    if not valid:
+        ax.text(0.5, 0.5, "No feature data available", ha="center", va="center")
+        ax.axis("off")
+        return
+
+    items = sorted(valid.items(), key=lambda x: abs(x[1]), reverse=True)
+    labels = [k for k, _ in items]
+    values = [v for _, v in items]
+    colors = [_REPORT_COLORS["green"] if v > 0 else _REPORT_COLORS["red"] for v in values]
+
+    ax.barh(labels, values, color=colors, edgecolor="black", alpha=0.8)
+    ax.axvline(0,  color="#999999", lw=1)
+    ax.axvline( 1, color="#cccccc", lw=0.8, ls="--")
+    ax.axvline(-1, color="#cccccc", lw=0.8, ls="--")
+    ax.axvline( 2, color="#dddddd", lw=0.8, ls=":")
+    ax.axvline(-2, color="#dddddd", lw=0.8, ls=":")
+    ax.set_title("Feature Deviation (Z-scores)", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Deviation from Baseline", fontsize=10)
+    ax.tick_params(axis="y", labelsize=9)
+    ax.tick_params(axis="x", labelsize=9)
+    ax.grid(axis="x", alpha=0.2, color="#EEEEEE")
+    ax.scatter([], [], color=_REPORT_COLORS["green"], label="Above baseline")
+    ax.scatter([], [], color=_REPORT_COLORS["red"],   label="Below baseline")
+    ax.legend(loc="lower right", fontsize=8, frameon=False)
+
+
+def draw_risk_table(
+    ax: plt.Axes,
+    risk_factors: List[Tuple[str, str, str]],
+) -> None:
+    """Draw a risk-factor table inside a card on *ax*.
+
+    *risk_factors* is a list of (factor_name, value, level) where
+    level is one of "High", "Medium", "Low".
+    """
+    add_card(ax)
+    ax.axis("off")
+    ax.text(0.05, 0.88, "Risk Factor Analysis", fontsize=12, fontweight="bold",
+            transform=ax.transAxes)
+    y = 0.65
+    for factor, value, level in risk_factors:
+        color = (
+            _REPORT_COLORS["red"]    if level == "High"   else
+            _REPORT_COLORS["yellow"] if level == "Medium" else
+            _REPORT_COLORS["green"]
+        )
+        ax.text(0.05, y, factor, fontsize=10, transform=ax.transAxes)
+        ax.text(0.45, y, value,  fontsize=10, transform=ax.transAxes)
+        ax.text(0.70, y, level,  fontsize=9,  transform=ax.transAxes,
+                bbox=dict(boxstyle="round,pad=0.25", fc=color, ec="none", alpha=0.3))
+        y -= 0.22
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Private helpers – derive display content from HealthResult
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _risk_factors_from_result(result: HealthResult) -> List[Tuple[str, str, str]]:
+    """Build a risk-factor list from the top deviating features."""
+    top = sorted(
+        [(k, v) for k, v in result.feature_zscores.items() if v is not None],
+        key=lambda x: abs(x[1]),
+        reverse=True,
+    )[:3]
+    rows: List[Tuple[str, str, str]] = []
+    for feat, zscore in top:
+        abs_z = abs(zscore)
+        level = "High" if abs_z >= 2.0 else ("Medium" if abs_z >= 1.0 else "Low")
+        rows.append((feat, f"{zscore:+.2f}σ", level))
+    return rows
+
+
+def _interpretation_from_result(result: HealthResult) -> str:
+    """Return a short clinical interpretation string."""
+    label = result.severity_label()
+    top = result.top_deviations
+    if top:
+        feat, abs_z = top[0]
+        raw_z = result.feature_zscores.get(feat, 0.0) or 0.0
+        direction = "above" if raw_z > 0 else "below"
+        return (
+            f"Score indicates {label.lower()}. Most notable deviation: "
+            f"{feat} ({raw_z:+.2f}σ {direction} baseline)."
+        )
+    return f"Score indicates {label.lower()}."
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public API
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def plot_patient_report(result: HealthResult, save_dir: Optional[str] = None) -> str:
-    """Generate a single-page health report for one patient.
+    """Generate a single-page clinical dashboard report for one patient.
+
+    Layout: GridSpec 3 rows × 2 columns
+      Row 0: patient info card | gauge (standalone, no card)
+      Row 1: feature deviation chart (spans both columns)
+      Row 2: interpretation card | risk-factor table card
 
     Returns the path to the saved PNG.
     """
     save_dir = save_dir or os.path.join(OUTPUT_DIR, "patient_reports")
     os.makedirs(save_dir, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    sns.set_style("white")
+    fig = plt.figure(figsize=(14, 10))
+    fig.patch.set_facecolor(_REPORT_COLORS["bg"])
+    gs = GridSpec(3, 2, height_ratios=[1.2, 1.5, 1.2], hspace=0.5, wspace=0.4)
     fig.suptitle(
-        f"Bone Health Report – Patient {result.patient_id}",
-        fontsize=14,
-        fontweight="bold",
-        y=1.01,
+        "Bone Health Analysis Report",
+        fontsize=18, fontweight="bold", y=0.98,
     )
 
-    _draw_score_card(axes[0], result)
-    _draw_feature_deviation_chart(axes[1], result)
+    # ── Row 0, Col 0: patient info card ──────────────────────────────────────
+    ax_info = fig.add_subplot(gs[0, 0])
+    add_card(ax_info)
+    ax_info.axis("off")
+    age_str    = str(int(result.age)) if result.age is not None else "N/A"
+    gender_str = result.gender or "N/A"
+    ax_info.text(0.05, 0.80, f"Patient ID:     {result.patient_id}", fontsize=11,
+                 transform=ax_info.transAxes)
+    ax_info.text(0.05, 0.62, f"Age:            {age_str}",           fontsize=11,
+                 transform=ax_info.transAxes)
+    ax_info.text(0.05, 0.44, f"Gender:         {gender_str}",        fontsize=11,
+                 transform=ax_info.transAxes)
+    ax_info.text(0.05, 0.26, f"Baseline Group: {result.stratum_used}", fontsize=11,
+                 transform=ax_info.transAxes)
 
-    plt.tight_layout()
+    # ── Row 0, Col 1: gauge (no card) ────────────────────────────────────────
+    ax_gauge = fig.add_subplot(gs[0, 1])
+    draw_gauge(ax_gauge, result.health_score)
+
+    # ── Row 1, full width: feature deviation chart ───────────────────────────
+    ax_feat = fig.add_subplot(gs[1, :])
+    draw_feature_chart(ax_feat, result.feature_zscores)
+
+    # ── Row 2, Col 0: interpretation card ────────────────────────────────────
+    ax_interp = fig.add_subplot(gs[2, 0])
+    add_card(ax_interp)
+    ax_interp.axis("off")
+    interp_text = _interpretation_from_result(result)
+    ax_interp.text(0.05, 0.85, "Interpretation", fontsize=12, fontweight="bold",
+                   transform=ax_interp.transAxes)
+    ax_interp.text(
+        0.05, 0.55,
+        "\n".join(textwrap.wrap(interp_text, 52)),
+        fontsize=10, transform=ax_interp.transAxes,
+    )
+
+    # ── Row 2, Col 1: risk factor table card ─────────────────────────────────
+    ax_risk = fig.add_subplot(gs[2, 1])
+    draw_risk_table(ax_risk, _risk_factors_from_result(result))
+
+    fig.text(
+        0.5, 0.02,
+        "This report is AI-assisted and for clinical support only.",
+        ha="center", fontsize=9, color="#888888",
+    )
+
     path = os.path.join(save_dir, f"{result.patient_id}_report.png")
-    fig.savefig(path, dpi=100, bbox_inches="tight")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
-
-
-def _draw_score_card(ax: plt.Axes, result: HealthResult) -> None:
-    """Draw a large health score gauge on *ax*."""
-    color = _score_color(result.health_score)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
-
-    # Background circle
-    circle = plt.Circle((0.5, 0.55), 0.35, color=color, alpha=0.15)
-    ax.add_patch(circle)
-    circle2 = plt.Circle((0.5, 0.55), 0.35, fill=False, edgecolor=color, linewidth=3)
-    ax.add_patch(circle2)
-
-    # Score number
-    ax.text(
-        0.5, 0.60,
-        str(result.health_score),
-        ha="center", va="center",
-        fontsize=60, fontweight="bold", color=color,
-    )
-    ax.text(
-        0.5, 0.42,
-        "/10",
-        ha="center", va="center",
-        fontsize=18, color="#555555",
-    )
-
-    # Severity label
-    ax.text(
-        0.5, 0.28,
-        result.severity_label(),
-        ha="center", va="center",
-        fontsize=12, color="#333333",
-        style="italic",
-    )
-
-    # Patient info
-    info_lines = [
-        f"Patient ID : {result.patient_id}",
-        f"Age        : {result.age if result.age is not None else 'N/A'}",
-        f"Gender     : {result.gender or 'N/A'}",
-        f"Baseline   : {result.stratum_used}  (n={result.stratum_n})",
-        f"Composite Δ: {result.composite_deviation:.2f} std",
-    ]
-    for i, line in enumerate(info_lines):
-        ax.text(0.05, 0.18 - i * 0.05, line, ha="left", va="top", fontsize=9, color="#444444")
-
-    # Top deviations
-    ax.text(0.05, -0.08, "Top Deviating Features:", ha="left", va="top",
-            fontsize=9, fontweight="bold", color="#333333")
-    for rank, (feat, zscore) in enumerate(result.top_deviations, start=1):
-        ax.text(0.05, -0.08 - rank * 0.05,
-                f"  {rank}. {feat}: {zscore:+.2f} std",
-                ha="left", va="top", fontsize=8.5, color="#555555")
-
-
-def _draw_feature_deviation_chart(ax: plt.Axes, result: HealthResult) -> None:
-    """Horizontal bar chart of per-feature z-scores."""
-    feats = [f for f in ALL_FEATURE_NAMES if result.feature_zscores.get(f) is not None]
-    zscores = [result.feature_zscores[f] for f in feats]
-
-    if not feats:
-        ax.text(0.5, 0.5, "No features available", ha="center", va="center")
-        ax.axis("off")
-        return
-
-    colors = ["#e74c3c" if z < 0 else "#2ecc71" for z in zscores]
-    y_pos = range(len(feats))
-
-    ax.barh(list(y_pos), zscores, color=colors, edgecolor="white", height=0.7)
-    ax.axvline(0, color="#333333", linewidth=1.2)
-    ax.axvline(-2, color="#f39c12", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax.axvline(2, color="#f39c12", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax.set_yticks(list(y_pos))
-    ax.set_yticklabels(feats, fontsize=8)
-    ax.set_xlabel("Z-score (deviation from age-gender baseline)", fontsize=9)
-    ax.set_title("Feature Deviations from Baseline", fontsize=10)
-    ax.grid(axis="x", alpha=0.3)
-
-    # Legend
-    red_patch = mpatches.Patch(color="#e74c3c", label="Below baseline")
-    green_patch = mpatches.Patch(color="#2ecc71", label="Above baseline")
-    ax.legend(handles=[green_patch, red_patch], fontsize=8, loc="lower right")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
