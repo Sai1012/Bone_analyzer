@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import EXCEL_FILE, LOCAL_IMAGES_FOLDER, OUTPUT_DIR
 from data_loader import load_dataset
-from feature_extractor import extract_all_features
+from feature_extractor import extract_all_features, save_normaliser
 from baseline_builder import build_baselines
 from health_scale_calculator import (
     calculate_all_health_scores,
@@ -50,10 +50,9 @@ from visualizer import generate_all_charts, plot_patient_report
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # CLI
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -100,10 +99,9 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Pipeline
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
     """Execute the full analysis pipeline.
@@ -138,6 +136,14 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
         features, normaliser = extract_all_features(df_mod, normalise=True)
     else:
         features, normaliser = extract_all_features(df, normalise=True)
+
+    if normaliser is not None:
+        norm_path = os.path.join(args.output_dir, "feature_normaliser.json")
+        try:
+            save_normaliser(normaliser, norm_path)
+            print(f"      Feature normaliser saved to {norm_path}")
+        except Exception as exc:
+            logger.warning("Could not save normaliser: %s", exc)
 
     print(f"      Extracted features for {len(features)} patients.")
 
@@ -197,10 +203,9 @@ def run_pipeline(args: argparse.Namespace) -> pd.DataFrame:
     return results_df
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Entry point
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = _build_parser()

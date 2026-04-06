@@ -9,6 +9,7 @@ applied to each patient).
 
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from pathlib import Path
@@ -21,9 +22,9 @@ from skimage.feature import graycomatrix, graycoprops
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Feature names (keep a canonical order)
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 
 IMAGE_FEATURE_NAMES: List[str] = [
     "bone_density_mean",
@@ -56,10 +57,9 @@ CLINICAL_FEATURE_NAMES: List[str] = [
 ALL_FEATURE_NAMES: List[str] = IMAGE_FEATURE_NAMES + CLINICAL_FEATURE_NAMES
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Image feature extraction
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def extract_image_features(image_path: Optional[str]) -> Dict[str, Optional[float]]:
     """Extract bone-health-relevant features from a single X-ray image.
@@ -106,7 +106,6 @@ def extract_image_features(image_path: Optional[str]) -> Dict[str, Optional[floa
 
 
 # ── Private image helpers ──────────────────────────────────────────────────────
-
 
 def _estimate_joint_space(img: np.ndarray) -> float:
     """Estimate joint space width using horizontal edge detection.
@@ -237,10 +236,9 @@ def _compute_geometric_features(img: np.ndarray) -> Dict[str, float]:
     }
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Clinical feature extraction
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def extract_clinical_features(row: pd.Series) -> Dict[str, Optional[float]]:
     """Extract clinical features from a single DataFrame row."""
@@ -257,10 +255,9 @@ def extract_clinical_features(row: pd.Series) -> Dict[str, Optional[float]]:
     return features
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # Feature normalisation
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 class FeatureNormaliser:
     """Min-max normaliser fitted on the full dataset feature matrix."""
@@ -312,11 +309,21 @@ class FeatureNormaliser:
         self.fit(feature_matrix)
         return [self.transform(fd) for fd in feature_matrix]
 
+    def to_dict(self) -> Dict[str, Dict[str, float]]:
+        return {"min": self._min, "max": self._max}
 
-# ──────────────────────────────────────────────────────────────────────────────
+    @classmethod
+    def from_dict(cls, data: Dict) -> "FeatureNormaliser":
+        obj = cls()
+        obj._min = {k: float(v) for k, v in data.get("min", {}).items()}
+        obj._max = {k: float(v) for k, v in data.get("max", {}).items()}
+        obj._fitted = True
+        return obj
+
+
+# ────────────────────────────────────────────────────────────────
 # High-level pipeline function
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ────────────────────────────────────────────────────────────────
 
 def extract_all_features(
     df: pd.DataFrame,
@@ -349,3 +356,19 @@ def extract_all_features(
     normaliser = FeatureNormaliser()
     normalised = normaliser.fit_transform(raw_features)
     return normalised, normaliser
+
+
+def save_normaliser(normaliser: FeatureNormaliser, path: str) -> None:
+    """Save a fitted FeatureNormaliser to JSON."""
+    if normaliser is None or not isinstance(normaliser, FeatureNormaliser) or not normaliser._fitted:
+        raise ValueError("Normaliser must be fitted before saving.")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(normaliser.to_dict(), fh, indent=2)
+
+
+def load_normaliser(path: str) -> FeatureNormaliser:
+    """Load a FeatureNormaliser from JSON."""
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return FeatureNormaliser.from_dict(data)
