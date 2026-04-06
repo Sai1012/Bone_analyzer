@@ -1,30 +1,69 @@
+"""
+app.py - Run the improved CBHS model on a single new patient (no retraining).
+
+Usage example
+-------------
+
+python app.py \
+    --image /path/to/new_knee.jpeg \
+    --patient-id NEW001 \
+    --age 65 \
+    --gender female \
+    --bmi 23.5 \
+    --t-score -1.8 \
+    --z-score -1.2 \
+    --walking-distance 2.0 \
+    --smoker 0 \
+    --alcoholic 0 \
+    --diabetic 0 \
+    --hypothyroidism 0 \
+    --estrogen-use 0 \
+    --history-of-fracture 0 \
+    --family-history 1
+
+This script:
+  - Loads pre-trained artifacts from output/ and output/improved/
+  - Extracts features for the new patient
+  - Computes z-score-based health score
+  - Computes ensemble probabilities
+  - Blends the two into a final 1–10 health score
+  - Updates HealthResult.health_score to the blended value
+  - Saves a PNG report to output/improved/patient_reports/<patient_id>_report.png
+"""
+
+from __future__ import annotations
+
+import argparse
 import os
-import tempfile
-from typing import Dict, Optional
+import sys
+from pathlib import Path
+from typing import Dict
 
 import numpy as np
 import pandas as pd
-import streamlit as st
+
+# Ensure project root on path
+sys.path.insert(0, str(Path(__file__).parent))
 
 from baseline_builder import load_baselines
+from config import OUTPUT_DIR
+from ensemble_classifier import BoneHealthEnsemble
 from feature_engineering import AdvancedFeatureExtractor, ADVANCED_FEATURE_NAMES
 from feature_extractor import (
     ALL_FEATURE_NAMES,
-    CLINICAL_FEATURE_NAMES,
     extract_clinical_features,
     extract_image_features,
     load_normaliser,
 )
-from health_scale_calculator import calculate_health_score, results_to_dataframe
-from ensemble_classifier import BoneHealthEnsemble
+from health_scale_calculator import calculate_health_score
 from threshold_optimizer import ThresholdOptimizer
 from visualizer import plot_patient_report
-
 
 CLASS_NAMES = ["normal", "osteopenia", "osteoporosis"]
 
 
 def _prob_to_score(proba: np.ndarray) -> float:
+    """Map class probabilities to a continuous score (1–10 scale)."""
     centres = np.array([9.0, 6.5, 4.0], dtype=float)  # normal, osteopenia, osteoporosis
     return float(np.dot(proba, centres))
 
@@ -35,183 +74,205 @@ def _blend_score(
     w_ensemble: float = 0.7,
     w_zscore: float = 0.3,
 ) -> float:
+    """Blend ensemble probability score with z-score health score."""
     blended = (w_ensemble * ensemble_score) + (w_zscore * zscore_score)
     return float(np.clip(blended, 1.0, 10.0))
 
 
-st.set_page_config(page_title="CBHS Single-Patient Test", layout="wide")
-
-st.title("CBHS – Single Patient Test (Improved Pipeline)")
-st.caption(
-    "Upload one knee X-ray + clinical inputs and get a blended ensemble + z-score health score."
-)
-
-with st.sidebar:
-    st.header("Model & Artifact Paths")
-    baselines_path = st.text_input("Baselines JSON", "output/baselines.json")
-    normaliser_path = st.text_input(
-        "Feature normaliser JSON", "output/improved/feature_normaliser.json"
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="app.py",
+        description="Run improved CBHS model on a single new patient (no retraining).",
     )
-    model_path = st.text_input(
-        "Ensemble model PKL", "output/improved/ensemble_model.pkl"
-    )
-    thresholds_path = st.text_input(
-        "Optimal thresholds JSON", "output/improved/optimal_thresholds.json"
-    )
-    output_dir = st.text_input("Output directory", "output/improved")
-    ensemble_method = st.selectbox("Ensemble method", ["soft", "stack"], index=0)
-    use_cnn = st.checkbox("Use CNN features (requires PyTorch)", value=False)
-
-st.subheader("Patient Details")
-col1, col2, col3 = st.columns(3)
-with col1:
-    patient_id = st.text_input("Patient ID", "uploaded_1")
-    age = st.number_input("Age", min_value=1, max_value=120, value=60)
-with col2:
-    gender = st.selectbox("Gender", ["male", "female", "unknown"], index=0)
-with col3:
-    image_file = st.file_uploader(
-        "Upload Knee X-ray (JPEG/PNG)", type=["jpg", "jpeg", "png"]
+    p.add_argument("--image", required=True, help="Path to knee X-ray (JPEG/PNG).")
+    p.add_argument("--patient-id", required=True, help="Patient identifier.")
+    p.add_argument("--age", type=float, required=True, help="Age in years.")
+    p.add_argument(
+        "--gender",
+        required=True,
+        choices=["male", "female", "unknown"],
+        help="Patient gender.",
     )
 
-st.subheader("Clinical Inputs")
+    # Clinical numeric
+    p.add_argument("--bmi", type=float, required=True)
+    p.add_argument("--t-score", type=float, required=True)
+    p.add_argument("--z-score", type=float, required=True)
+    p.add_argument("--walking-distance", type=float, required=True)
 
-binary_fields = {
-    "smoker": "Smoker",
-    "alcoholic": "Alcoholic",
-    "diabetic": "Diabetic",
-    "hypothyroidism": "Hypothyroidism",
-    "estrogen_use": "Estrogen use",
-    "history_of_fracture": "History of fracture",
-    "family_history": "Family history",
-}
+    # Binary flags (0/1)
+    p.add_argument("--smoker", type=int, choices=[0, 1], required=True)
+    p.add_argument("--alcoholic", type=int, choices=[0, 1], required=True)
+    p.add_argument("--diabetic", type=int, choices=[0, 1], required=True)
+    p.add_argument("--hypothyroidism", type=int, choices=[0, 1], required=True)
+    p.add_argument("--estrogen-use", type=int, choices=[0, 1], required=True)
+    p.add_argument("--history-of-fracture", type=int, choices=[0, 1], required=True)
+    p.add_argument("--family-history", type=int, choices=[0, 1], required=True)
 
-numeric_fields = {
-    "bmi": (0.0, 60.0, 22.0),
-    "t_score": (-5.0, 5.0, -1.0),
-    "z_score": (-5.0, 5.0, -1.0),
-    "walking_distance": (0.0, 20.0, 2.0),
-}
-
-clin_values: Dict[str, Optional[float]] = {}
-
-c1, c2, c3 = st.columns(3)
-with c1:
-    for key in ["bmi", "t_score", "z_score"]:
-        lo, hi, default = numeric_fields[key]
-        clin_values[key] = st.number_input(
-            key, min_value=lo, max_value=hi, value=default
-        )
-with c2:
-    lo, hi, default = numeric_fields["walking_distance"]
-    clin_values["walking_distance"] = st.number_input(
-        "walking_distance", min_value=lo, max_value=hi, value=default
+    # Paths to artifacts (defaults assume you already ran improved_main.py)
+    p.add_argument(
+        "--baselines",
+        default=os.path.join(OUTPUT_DIR, "baselines.json"),
+        help="Path to baselines.json (default: output/baselines.json).",
     )
-with c3:
-    for key, label in binary_fields.items():
-        clin_values[key] = 1 if st.selectbox(label, ["No", "Yes"], index=0) == "Yes" else 0
+    p.add_argument(
+        "--normaliser",
+        default=os.path.join(OUTPUT_DIR, "improved", "feature_normaliser.json"),
+        help="Path to feature_normaliser.json (default: output/improved/feature_normaliser.json).",
+    )
+    p.add_argument(
+        "--model",
+        default=os.path.join(OUTPUT_DIR, "improved", "ensemble_model.pkl"),
+        help="Path to saved ensemble model (default: output/improved/ensemble_model.pkl).",
+    )
+    p.add_argument(
+        "--thresholds",
+        default=os.path.join(OUTPUT_DIR, "improved", "optimal_thresholds.json"),
+        help="Path to saved optimal thresholds (default: output/improved/optimal_thresholds.json).",
+    )
+    p.add_argument(
+        "--output-dir",
+        default=os.path.join(OUTPUT_DIR, "improved"),
+        help="Directory for saving the patient report PNG.",
+    )
+    p.add_argument(
+        "--ensemble-method",
+        choices=["soft", "stack"],
+        default="soft",
+        help="Ensemble probability method (default: soft).",
+    )
+    p.add_argument(
+        "--no-cnn",
+        action="store_true",
+        help="Skip CNN-based advanced features (if you only trained with non-CNN).",
+    )
+    return p
 
-if st.button("Analyze"):
-    if image_file is None:
-        st.error("Please upload a knee X-ray image.")
-        st.stop()
 
-    missing = [
-        p for p in [baselines_path, normaliser_path, model_path] if not os.path.exists(p)
-    ]
-    if missing:
-        st.error("Missing required files: " + ", ".join(missing))
-        st.stop()
+def main() -> None:
+    args = _build_parser().parse_args()
 
-    # Save uploaded image to temp
-    suffix = os.path.splitext(image_file.name)[1].lower() or ".jpg"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(image_file.read())
-        image_path = tmp.name
+    image_path = args.image
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image not found: {image_path}")
 
-    # Build clinical series
-    row_data = {**clin_values, "age": age, "gender": gender, "patient_id": patient_id}
-    row = pd.Series(row_data)
+    # ------------------------------------------------------------------
+    # 1. Load trained artifacts (NO retraining)
+    # ------------------------------------------------------------------
+    if not os.path.exists(args.baselines):
+        raise FileNotFoundError(f"Baselines JSON not found: {args.baselines}")
+    if not os.path.exists(args.normaliser):
+        raise FileNotFoundError(f"Feature normaliser JSON not found: {args.normaliser}")
+    if not os.path.exists(args.model):
+        raise FileNotFoundError(f"Ensemble model not found: {args.model}")
+    if not os.path.exists(args.thresholds):
+        raise FileNotFoundError(f"Thresholds JSON not found: {args.thresholds}")
 
-    # Load normaliser & baselines
-    normaliser = load_normaliser(normaliser_path)
-    baselines = load_baselines(baselines_path)
+    baselines = load_baselines(args.baselines)
+    normaliser = load_normaliser(args.normaliser)
+    ensemble = BoneHealthEnsemble.load(args.model)
+    threshold_opt = ThresholdOptimizer.load(args.thresholds)
 
-    # Extract base features
+    # ------------------------------------------------------------------
+    # 2. Build a clinical Series for this new patient
+    # ------------------------------------------------------------------
+    clin_data: Dict[str, float] = {
+        "bmi": args.bmi,
+        "t_score": args.t_score,
+        "z_score": args.z_score,
+        "walking_distance": args.walking_distance,
+        "smoker": args.smoker,
+        "alcoholic": args.alcoholic,
+        "diabetic": args.diabetic,
+        "hypothyroidism": args.hypothyroidism,
+        "estrogen_use": args.estrogen_use,
+        "history_of_fracture": args.history_of_fracture,
+        "family_history": args.family_history,
+        "age": args.age,
+        "gender": args.gender,
+        "patient_id": args.patient_id,
+    }
+    row = pd.Series(clin_data)
+
+    # ------------------------------------------------------------------
+    # 3. Extract base (image + clinical) features and normalise
+    # ------------------------------------------------------------------
     img_feats = extract_image_features(image_path)
     clin_feats = extract_clinical_features(row)
     combined = {**img_feats, **clin_feats}
     norm_feats = normaliser.transform(combined)
 
-    # Z-score based health score
+    # ------------------------------------------------------------------
+    # 4. Z-score based health score via existing calculator
+    # ------------------------------------------------------------------
     result = calculate_health_score(
         patient_features=norm_feats,
-        age=age,
-        gender=gender,
-        patient_id=patient_id,
+        age=args.age,
+        gender=args.gender,
+        patient_id=args.patient_id,
         baselines=baselines,
     )
     zscore_health = float(result.health_score)
 
-    # Advanced image features for ensemble
+    # ------------------------------------------------------------------
+    # 5. Advanced features for ensemble, then ensemble probabilities
+    # ------------------------------------------------------------------
+    use_cnn = not args.no_cnn
     adv_extractor = AdvancedFeatureExtractor(use_cnn=use_cnn)
     adv_feats = adv_extractor.extract_image_features(image_path)
 
     base_vec = np.array(
-        [norm_feats.get(k) or 0.0 for k in ALL_FEATURE_NAMES], dtype=np.float32
+        [norm_feats.get(k) or 0.0 for k in ALL_FEATURE_NAMES],
+        dtype=np.float32,
     )
     adv_vec = np.array(
-        [adv_feats.get(k) or 0.0 for k in ADVANCED_FEATURE_NAMES], dtype=np.float32
+        [adv_feats.get(k) or 0.0 for k in ADVANCED_FEATURE_NAMES],
+        dtype=np.float32,
     )
     X = np.concatenate([base_vec, adv_vec]).reshape(1, -1)
 
-    ensemble = BoneHealthEnsemble.load(model_path)
     proba = ensemble.predict_proba(
-        X, health_scores=np.array([zscore_health]), method=ensemble_method
+        X,
+        health_scores=np.array([zscore_health]),
+        method=args.ensemble_method,
     )[0]
 
-    # Threshold-based class label if thresholds exist
-    if os.path.exists(thresholds_path):
-        threshold_opt = ThresholdOptimizer.load(thresholds_path)
-        pred_idx = int(threshold_opt.predict(proba.reshape(1, -1))[0])
-    else:
-        pred_idx = int(np.argmax(proba))
-
+    # Threshold optimizer -> predicted class index
+    pred_idx = int(threshold_opt.predict(proba.reshape(1, -1))[0])
     pred_label = CLASS_NAMES[pred_idx]
     confidence = float(np.max(proba))
 
+    # ------------------------------------------------------------------
+    # 6. Blend z-score health score + ensemble probability-based score
+    # ------------------------------------------------------------------
     ensemble_score = _prob_to_score(proba)
     blended_score = _blend_score(
-        ensemble_score, zscore_health, w_ensemble=0.7, w_zscore=0.3
+        ensemble_score,
+        zscore_health,
+        w_ensemble=0.7,
+        w_zscore=0.3,
     )
 
-    # Replace health_score with blended (rounded int)
+    # Overwrite result.health_score to use blended (CBHS) score
     result.health_score = int(round(blended_score))
 
-    st.success("Analysis complete")
+    # ------------------------------------------------------------------
+    # 7. Save only the PNG report, and print summary to stdout
+    # ------------------------------------------------------------------
+    report_dir = os.path.join(args.output_dir, "patient_reports")
+    os.makedirs(report_dir, exist_ok=True)
 
-    colA, colB, colC = st.columns(3)
-    colA.metric("Blended Health Score", f"{blended_score:.2f} / 10")
-    colB.metric("Final Score (rounded)", f"{result.health_score} / 10")
-    colC.metric("Predicted Class", f"{pred_label} ({confidence:.2f})")
+    report_path = plot_patient_report(result, save_dir=report_dir)
 
-    st.write("**Z-score Health Score (baseline):**", f"{zscore_health:.2f}")
-    st.write("**Ensemble Probability Score:**", f"{ensemble_score:.2f}")
+    print("\n=== CBHS INFERENCE RESULT ===")
+    print(f"Patient ID:        {args.patient_id}")
+    print(f"Predicted class:   {pred_label} (confidence {confidence:.2f})")
+    print(f"Z-score health:    {zscore_health:.2f} / 10")
+    print(f"Ensemble score:    {ensemble_score:.2f} / 10")
+    print(f"Blended CBHS:      {blended_score:.2f} / 10")
+    print(f"Final (rounded):   {result.health_score} / 10")
+    print(f"Report PNG saved:  {report_path}\n")
 
-    # Generate report PNG
-    os.makedirs(output_dir, exist_ok=True)
-    report_path = plot_patient_report(
-        result, save_dir=os.path.join(output_dir, "patient_reports")
-    )
-    st.image(report_path, caption="Patient Report")
 
-    # Tabular output
-    df_out = results_to_dataframe([result])
-    st.dataframe(df_out, use_container_width=True)
-
-    st.download_button(
-        label="Download CSV",
-        data=df_out.to_csv(index=False).encode("utf-8"),
-        file_name=f"{patient_id}_health_score.csv",
-        mime="text/csv",
-    )
+if __name__ == "__main__":
+    main()
