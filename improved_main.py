@@ -309,6 +309,57 @@ def run_improved_pipeline(args: argparse.Namespace) -> Dict:
         y_test, y_pred_improved, target_names=CLASS_NAMES, output_dict=True,
     )
 
+    # ───────────────────────────────────────────────────────────────
+    # Blend ensemble score + z-score health score and update results
+    # ───────────────────────────────────────────────────────────────
+
+    # Use ensemble probabilities on the full dataset X
+    method_prob = args.ensemble_method if args.ensemble_method in ("soft", "stack") else "soft"
+    all_proba = ensemble.predict_proba(
+        X,
+        health_scores=health_scores,
+        method=method_prob,
+    )
+
+    # Convert probabilities → continuous score (1–10)
+    ensemble_scores = _prob_to_score(all_proba)
+
+    # Blend with original z-score-based health_scores
+    blended_scores = _blend_scores(
+        ensemble_scores,
+        health_scores,
+        w_ensemble=0.7,
+        w_zscore=0.3,
+    )
+
+    # Replace HealthResult.health_score with blended (rounded int) for all patients
+    for i, result in enumerate(results):
+        result.health_score = int(round(blended_scores[i]))
+
+    # Save updated health scores (CBHS file for improved pipeline)
+    results_df_blended = results_to_dataframe(results)
+    if "diagnosis" in df.columns:
+        results_df_blended["actual_diagnosis"] = df["diagnosis"].values
+
+    csv_blended = os.path.join(args.output_dir, "health_scores.csv")
+    xlsx_blended = os.path.join(args.output_dir, "health_scores.xlsx")
+    results_df_blended.to_csv(csv_blended, index=False)
+    results_df_blended.to_excel(xlsx_blended, index=False)
+    print(f"      Blended CBHS scores saved to {csv_blended}")
+    print(f"      Blended CBHS scores saved to {xlsx_blended}")
+
+    # Regenerate patient reports using blended scores (separate improved folder)
+    patient_report_dir = os.path.join(args.output_dir, "patient_reports")
+    os.makedirs(patient_report_dir, exist_ok=True)
+    saved_reports_blended = 0
+    for result in results:
+        try:
+            plot_patient_report(result, save_dir=patient_report_dir)
+            saved_reports_blended += 1
+        except Exception as exc:
+            logger.warning("Failed to generate blended-score report: %s", exc)
+    print(f"      Saved {saved_reports_blended} blended-score report(s) to {patient_report_dir}")
+
     # ──────────────────────────────────────────────────────────────────────────
     # Step 6: Visualisations & report
     # ──────────────────────────────────────────────────────────────────────────
