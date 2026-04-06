@@ -117,8 +117,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--normaliser",
-        default=os.path.join(OUTPUT_DIR, "improved", "feature_normaliser.json"),
-        help="Path to feature_normaliser.json (default: output/improved/feature_normaliser.json).",
+        default=os.path.join(OUTPUT_DIR, "feature_normaliser.json"),
+        help="Path to feature_normaliser.json (default: output/feature_normaliser.json).",
     )
     p.add_argument(
         "--model",
