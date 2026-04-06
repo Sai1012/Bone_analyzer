@@ -460,7 +460,22 @@ def _expand_health_scores(
         [class_means.get(int(label), 5.0) for label in y_after],
         dtype=float,
     )
+def _prob_to_score(proba: np.ndarray) -> np.ndarray:
+    """Map class probabilities to a continuous score (1–10 scale)."""
+    # Centres on 1–10 scale for each class; adjust if needed.
+    centres = np.array([9.0, 6.5, 4.0], dtype=float)  # normal, osteopenia, osteoporosis
+    return np.dot(proba, centres)
 
+
+def _blend_scores(
+    ensemble_scores: np.ndarray,
+    zscore_scores: np.ndarray,
+    w_ensemble: float = 0.7,
+    w_zscore: float = 0.3,
+) -> np.ndarray:
+    """Blend ensemble probability-based score with z-score-based health score."""
+    blended = (w_ensemble * ensemble_scores) + (w_zscore * zscore_scores)
+    return np.clip(blended, 1.0, 10.0)
 
 def _plot_confusion_matrices(
     y_true_base: np.ndarray,
